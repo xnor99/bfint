@@ -6,11 +6,7 @@ use std::process::ExitCode;
 #[cfg_attr(test, derive(Debug, PartialEq))]
 enum BFInstruction {
     Add(u8),
-    Subtract(u8),
-    // TODO: replace Subtract variant with Add
     IncrementPointer(usize),
-    DecrementPointer(usize),
-    // TODO: replace DecrementPointer variant with IncrementPointer
     Output,
     Input,
     LoopStart(usize),
@@ -24,6 +20,7 @@ fn parse_data(data: &[u8]) -> Option<Vec<BFInstruction>> {
     for &byte in data {
         match byte {
             b'+' => match last_instruction.take() {
+                Some(BFInstruction::Add(u8::MAX)) => last_instruction = None,
                 Some(BFInstruction::Add(val)) => last_instruction = Some(BFInstruction::Add(val.wrapping_add(1))),
                 Some(other_instruction) => {
                     instructions.push(Some(other_instruction));
@@ -32,14 +29,16 @@ fn parse_data(data: &[u8]) -> Option<Vec<BFInstruction>> {
                 None => last_instruction = Some(BFInstruction::Add(1))
             }
             b'-' => match last_instruction.take() {
-                Some(BFInstruction::Subtract(val)) => last_instruction = Some(BFInstruction::Subtract(val.wrapping_add(1))),
+                Some(BFInstruction::Add(1)) => last_instruction = None,
+                Some(BFInstruction::Add(val)) => last_instruction = Some(BFInstruction::Add(val.wrapping_sub(1))),
                 Some(other_instruction) => {
                     instructions.push(Some(other_instruction));
-                    last_instruction = Some(BFInstruction::Subtract(1));
+                    last_instruction = Some(BFInstruction::Add(u8::MAX));
                 }
-                None => last_instruction = Some(BFInstruction::Subtract(1))
+                None => last_instruction = Some(BFInstruction::Add(u8::MAX))
             }
             b'>' => match last_instruction.take() {
+                Some(BFInstruction::IncrementPointer(usize::MAX)) => last_instruction = None,
                 Some(BFInstruction::IncrementPointer(by)) => last_instruction = Some(BFInstruction::IncrementPointer(by.wrapping_add(1))),
                 Some(other_instruction) => {
                     instructions.push(Some(other_instruction));
@@ -48,12 +47,13 @@ fn parse_data(data: &[u8]) -> Option<Vec<BFInstruction>> {
                 None => last_instruction = Some(BFInstruction::IncrementPointer(1))
             }
             b'<' => match last_instruction.take() {
-                Some(BFInstruction::DecrementPointer(by)) => last_instruction = Some(BFInstruction::DecrementPointer(by.wrapping_add(1))),
+                Some(BFInstruction::IncrementPointer(1)) => last_instruction = None,
+                Some(BFInstruction::IncrementPointer(by)) => last_instruction = Some(BFInstruction::IncrementPointer(by.wrapping_sub(1))),
                 Some(other_instruction) => {
                     instructions.push(Some(other_instruction));
-                    last_instruction = Some(BFInstruction::DecrementPointer(1));
+                    last_instruction = Some(BFInstruction::IncrementPointer(usize::MAX));
                 }
-                None => last_instruction = Some(BFInstruction::DecrementPointer(1))
+                None => last_instruction = Some(BFInstruction::IncrementPointer(usize::MAX))
             }
             b'.' => {
                 if let Some(last) = last_instruction.take() {
@@ -133,15 +133,7 @@ fn run_program(program: &[BFInstruction], memory_size: usize) -> ExecutionResult
                 
                 *current_byte = current_byte.wrapping_add(val);
             }
-            BFInstruction::Subtract(val) => {
-                let Some(current_byte) = memory.get_mut(data_pointer) else {
-                    return ExecutionResult::MemoryAccessError;
-                };
-                
-                *current_byte = current_byte.wrapping_sub(val);
-            }
             BFInstruction::IncrementPointer(by) => data_pointer = data_pointer.wrapping_add(by),
-            BFInstruction::DecrementPointer(by) => data_pointer = data_pointer.wrapping_sub(by),
             BFInstruction::Output => {
                 let Some(&current_byte) = memory.get(data_pointer) else {
                     return ExecutionResult::MemoryAccessError;
@@ -230,7 +222,12 @@ mod tests {
     
     #[test]
     fn optimizations() {
-        assert_eq!(parse_data(b"++++++.---,").unwrap(), [BFInstruction::Add(6), BFInstruction::Output, BFInstruction::Subtract(3), BFInstruction::Input]);
+        assert_eq!(parse_data(b"++++++.---,").unwrap(), [BFInstruction::Add(6), BFInstruction::Output, BFInstruction::Add(253), BFInstruction::Input]);
+    }
+    
+    #[test]
+    fn dead_code_elimination() {
+        assert_eq!(parse_data(b"++--+-+--+<>>><<").unwrap(), []);
     }
     
     #[test]
